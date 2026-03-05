@@ -212,3 +212,9 @@ data
 
 runs
 
+train/__pycache__/
+
+
+outputs
+
+scripts/__pycache__/
