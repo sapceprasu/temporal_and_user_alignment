@@ -7,8 +7,10 @@ import os
 from configs.config_loader import load_config  # your loader
 from train.model_utils import load_tokenizer, load_policy_and_reference_qlora
 from train.trainer_erm import TrainConfig, ERMDPOTrainer
+from data.preference_dataset import PreferenceJSONLDataset
 
-from data.dummy_dataset import DummyPreferenceDataset
+
+train_ds = PreferenceJSONLDataset("data/processed/preferences.jsonl")
 
 
 def build_dataset(cfg, tokenizer):
