@@ -1,4 +1,3 @@
-# scripts/test_dpo_loss.py
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM
 
@@ -6,56 +5,56 @@ from data.dummy_dataset import DummyPreferenceDataset
 from data.collators import DPODataCollator
 from loss.dpo_loss import dpo_loss
 
-
 def main():
-    model_name = "meta-llama/Llama-2-7b-hf"
+    model_id = "meta-llama/Llama-2-7b-hf"
     beta = 0.1
+    max_length = 256
 
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    tokenizer = AutoTokenizer.from_pretrained(model_id)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    policy = AutoModelForCausalLM.from_pretrained(
-        model_name,
-        torch_dtype=torch.bfloat16,
-        device_map="auto"
-    )
-    ref = AutoModelForCausalLM.from_pretrained(
-        model_name,
-        torch_dtype=torch.bfloat16,
-        device_map="auto"
-    )
-    ref.eval()
-    for p in ref.parameters():
-        p.requires_grad_(False)
+    # Initialize Policy and Reference models
+    model_kwargs = {
+        "torch_dtype": torch.bfloat16,
+        "device_map": "auto",
+    }
 
-    ds = DummyPreferenceDataset(tokenizer, size=8)
-    collator = DPODataCollator(tokenizer=tokenizer, max_length=256)
+    policy = AutoModelForCausalLM.from_pretrained(model_id, **model_kwargs)
+    reference = AutoModelForCausalLM.from_pretrained(model_id, **model_kwargs)
+    
+    reference.eval()
+    reference.requires_grad_(False)
 
-    # Build a small batch
-    features = [ds[i] for i in range(4)]
-    batch = collator(features)
+    # Data preparation
+    dataset = DummyPreferenceDataset(tokenizer, size=8)
+    collator = DPODataCollator(tokenizer=tokenizer, max_length=max_length)
 
-    # Move tensors to the policy device
+    # Construct test batch
+    samples = [dataset[i] for i in range(4)]
+    batch = collator(samples)
+
+    # Transfer batch to the active device
     device = policy.device
-    for k, v in batch.items():
-        if isinstance(v, torch.Tensor):
-            batch[k] = v.to(device)
+    batch = {k: v.to(device) if torch.is_tensor(v) else v for k, v in batch.items()}
 
-    out = dpo_loss(policy, ref, batch, beta=beta)
-    print("DEBUG: logit sign check (should be mixed):", float(out.dpo_accuracy))
+    # Compute loss
+    output = dpo_loss(policy, reference, batch, beta=beta)
 
+    # Metrics reporting
+    print(f"{'DPO Test Results':-^40}")
+    print(f"Loss:           {output.loss.item():.4f}")
+    print(f"Accuracy:       {output.dpo_accuracy.item():.4f}")
+    print(f"Chosen Reward:  {output.chosen_reward.item():.4f}")
+    print(f"Rejected Reward:{output.rejected_reward.item():.4f}")
+    print(f"LogP Chosen:    {output.logp_chosen.item():.4f}")
+    print(f"LogP Rejected:  {output.logp_rejected.item():.4f}")
 
-    print("Loss:", out.loss.item())
-    print("Chosen reward:", out.chosen_reward.item())
-    print("Rejected reward:", out.rejected_reward.item())
-    print("DPO acc:", out.dpo_accuracy.item())
-    print("logp chosen:", out.logp_chosen.item(), "logp rejected:", out.logp_rejected.item())
-
-    # Backward to ensure grads flow
-    out.loss.backward()
-    print("Backward OK. Example grad norm:", policy.model.embed_tokens.weight.grad.norm().item())
-
+    # Verify gradient flow
+    output.loss.backward()
+    grad_norm = policy.model.embed_tokens.weight.grad.norm().item()
+    print(f"Gradient Flow:  Confirmed (Norm: {grad_norm:.4f})")
+    print("-" * 40)
 
 if __name__ == "__main__":
     main()
